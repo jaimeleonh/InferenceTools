@@ -128,13 +128,13 @@ class HHDNNProducer(JetLepMetModule):
 
 
 def HH(**kwargs):
-    return lambda: HHProducer(**kwargs)
+    return lambda: HHDNNProducer(**kwargs)
 
 
 class HHDNNInputRDFProducer(JetLepMetSyst):
-    def __init__(self, isZZAnalysis, *args, **kwargs):
+    def __init__(self, AnalysisType, *args, **kwargs):
         year = kwargs.pop("year")
-        self.isZZAnalysis = isZZAnalysis
+        self.AnalysisType = AnalysisType
         super(HHDNNInputRDFProducer, self).__init__(*args, **kwargs)
 
         if not os.getenv("_HHbbttDNNDefault"):
@@ -159,29 +159,29 @@ class HHDNNInputRDFProducer(JetLepMetSyst):
             ROOT.gROOT.ProcessLine(".L {}/interface/HHDNNinterface.h".format(base))
             ROOT.gROOT.ProcessLine(".L {}/interface/lester_mt2_bisect.h".format(base))
 
+        if not self.AnalysisType:
+            feat_file = "{}/{}/src/cms_runII_dnn_models/models/nonres_gluglu/2020-07-31-0/features.txt".format(
+                os.getenv("CMT_CMSSW_BASE"), os.getenv("CMT_CMSSW_VERSION"))
+        else:
+            feat_file = "{}/{}/src/cms_runII_dnn_models/models/arc_checks/zz_bbtt/2024-02-15/ZZbbtt-0/features.txt".format(
+                os.getenv("CMT_CMSSW_BASE"), os.getenv("CMT_CMSSW_VERSION"))
+        with open(feat_file) as f:
+            self.default_feat = [i.split('\n')[0] for i in f.readlines()]
+
+        model_dir = "{}/{}/src/cms_runII_dnn_models/models/nonres_gluglu/2020-07-31-0/".format(
+            os.getenv("CMT_CMSSW_BASE"), os.getenv("CMT_CMSSW_VERSION"))
+        ensemble = model_dir + "ensemble"
+        features = model_dir + "features.txt"
+
+        feature_file = kwargs.pop("feature_file", features)
+        with open(feature_file) as f:
+            lines = f.readlines()
+        req_features = ', '.join(['"%s"' % line.strip() for line in lines])
+
+        model_dir = kwargs.pop("model_dir", ensemble)
+
         if not os.getenv("_HHbbttDNNInput"):
             os.environ["_HHbbttDNNInput"] = "HHbbttDNNInput"
-
-            feat_file = "{}/{}/src/cms_runII_dnn_models/models/arc_checks/zz_bbtt/2021-11-22-0/" \
-                "features.txt".format(os.getenv("CMT_CMSSW_BASE"), os.getenv("CMT_CMSSW_VERSION"))
-            with open(feat_file) as f:
-                self.default_feat = [i.split('\n')[0] for i in f.readlines()]
-
-            if self.isZZAnalysis:
-                model_dir = "{}/{}/src/cms_runII_dnn_models/models/arc_checks/zz_bbtt/2023-08-02-0/".format(
-                    os.getenv("CMT_CMSSW_BASE"), os.getenv("CMT_CMSSW_VERSION"))
-            else:
-                model_dir = "{}/{}/src/cms_runII_dnn_models/models/nonres_gluglu/2020-07-31-0/".format(
-                    os.getenv("CMT_CMSSW_BASE"), os.getenv("CMT_CMSSW_VERSION"))
-            ensemble = model_dir + "ensemble"
-            features = model_dir + "features.txt"
-
-            feature_file = kwargs.pop("feature_file", features)
-            with open(feature_file) as f:
-                lines = f.readlines()
-            req_features = ', '.join(['"%s"' % line.strip() for line in lines])
-
-            model_dir = kwargs.pop("model_dir", ensemble)
 
             ROOT.gInterpreter.Declare("""
                 auto hhdnnInput = HHDNNinterface("%s", {%s}, {1.}, %s);
@@ -315,7 +315,17 @@ class HHDNNInputRDFProducer(JetLepMetSyst):
             """)
 
     def run(self, df):
-        p = "H" if not self.isZZAnalysis else "Z"
+
+        # DEBUG
+        if not self.AnalysisType:
+            p_b = "H"; p_t = "H"; pp = "HH"
+            print(" ### INFO: Running HHDNN with default option for HH analysis")
+        else:
+            print(" ### INFO: Running HHDNN with AnalysisType = {}".format(self.AnalysisType))
+            if self.AnalysisType == "Zbb_Ztautau":      p_b = "Z"; p_t = "Z"; pp = "ZZ"; p_sv = "X"
+            elif self.AnalysisType == "Zbb_Htautau":    p_b = "Z"; p_t = "H"; pp = "ZH"; p_sv = "X"
+            elif self.AnalysisType == "Ztautau_Hbb":    p_b = "H"; p_t = "Z"; pp = "ZH"; p_sv = "X"
+        
         branches = ["{0}{1}".format(i, self.systs) for i in self.default_feat]
         all_branches = df.GetColumnNames()
         if branches[0] in all_branches:
@@ -329,10 +339,10 @@ class HHDNNInputRDFProducer(JetLepMetSyst):
             "Tau_pt{2}, Tau_eta, Tau_phi, Tau_mass{2}, "
             "Jet_pt{3}, Jet_eta, Jet_phi, Jet_mass{3}, "
             "{7}tt_svfit_pt{4}, {7}tt_svfit_eta{4}, {7}tt_svfit_phi{4}, {7}tt_svfit_mass{4}, "
-            "{7}{7}KinFit_mass{4}, {7}{7}KinFit_chi2{4}, MET{5}_pt{6}, MET{5}_phi{6}, "
+            "{8}KinFit_mass{4}, {8}KinFit_chi2{4}, MET{5}_pt{6}, MET{5}_phi{6}, "
             "Jet_btagDeepFlavB, Jet_btagDeepFlavCvL, Jet_btagDeepFlavCvB, Jet_HHbtag)".format(
                 self.muon_syst, self.electron_syst, self.tau_syst, self.jet_syst, self.systs,
-                self.met_smear_tag, self.met_syst, p)
+                self.met_smear_tag, self.met_syst, p_sv, pp)
             )
 
         for ib, branch in enumerate(branches):
@@ -340,9 +350,9 @@ class HHDNNInputRDFProducer(JetLepMetSyst):
         return df, branches
 
 class HHDNNRDFProducer(JetLepMetSyst):
-    def __init__(self, isZZAnalysis, *args, **kwargs):
+    def __init__(self, AnalysisType, *args, **kwargs):
         year = kwargs.pop("year")
-        self.isZZAnalysis = isZZAnalysis
+        self.AnalysisType = AnalysisType
         super(HHDNNRDFProducer, self).__init__(*args, **kwargs)
 
         if not os.getenv("_HHbbttDNNDefault"):
@@ -370,12 +380,20 @@ class HHDNNRDFProducer(JetLepMetSyst):
         if not os.getenv("_HHbbttDNN"):
             os.environ["_HHbbttDNN"] = "HHbbttDNN"
 
-            if self.isZZAnalysis:
-                model_dir = "{}/{}/src/cms_runII_dnn_models/models/arc_checks/zz_bbtt/2023-08-02-0/".format(
-                    os.getenv("CMT_CMSSW_BASE"), os.getenv("CMT_CMSSW_VERSION"))
-            else:
+            if not self.AnalysisType:
                 model_dir = "{}/{}/src/cms_runII_dnn_models/models/nonres_gluglu/2020-07-31-0/".format(
                     os.getenv("CMT_CMSSW_BASE"), os.getenv("CMT_CMSSW_VERSION"))
+            elif self.AnalysisType == "Zbb_Ztautau":
+                # model_dir = "{}/{}/src/cms_runII_dnn_models/models/arc_checks/zz_bbtt/2023-08-02-0/".format( # old model
+                model_dir = "{}/{}/src/cms_runII_dnn_models/models/arc_checks/zz_bbtt/2024-02-15/ZZbbtt-0/".format(
+                    os.getenv("CMT_CMSSW_BASE"), os.getenv("CMT_CMSSW_VERSION"))
+            elif self.AnalysisType == "Zbb_Htautau": # or self.AnalysisType == "Ztautau_Hbb":
+                model_dir = "{}/{}/src/cms_runII_dnn_models/models/arc_checks/zz_bbtt/2024-02-15/ZbbHtt-0/".format(
+                    os.getenv("CMT_CMSSW_BASE"), os.getenv("CMT_CMSSW_VERSION"))
+            elif self.AnalysisType == "Ztautau_Hbb":
+                model_dir = "{}/{}/src/cms_runII_dnn_models/models/arc_checks/zz_bbtt/2024-02-15/ZttHbb-0/".format(
+                    os.getenv("CMT_CMSSW_BASE"), os.getenv("CMT_CMSSW_VERSION"))
+
             ensemble = model_dir + "ensemble"
             features = model_dir + "features.txt"
 
@@ -518,8 +536,18 @@ class HHDNNRDFProducer(JetLepMetSyst):
             """)
 
     def run(self, df):
-        p = "H" if not self.isZZAnalysis else "Z"
-        branches = ["dnn_%sbbtt_kl_1%s" % (p+p, self.systs)]
+
+        # DEBUG
+        if not self.AnalysisType:
+            p_b = "H"; p_t = "H"; pp = "HH"
+            print(" ### INFO: Running HHDNN with default option for HH analysis")
+        else:
+            print(" ### INFO: Running HHDNN with AnalysisType = {}".format(self.AnalysisType))
+            if self.AnalysisType == "Zbb_Ztautau":      p_b = "Z"; p_t = "Z"; pp = "ZZ"; p_sv = "X"
+            elif self.AnalysisType == "Zbb_Htautau":    p_b = "Z"; p_t = "H"; pp = "ZH"; p_sv = "X"
+            elif self.AnalysisType == "Ztautau_Hbb":    p_b = "H"; p_t = "Z"; pp = "ZH"; p_sv = "X"
+
+        branches = ["dnn_%sbbtt_kl_1%s" % (pp, self.systs)]
         all_branches = df.GetColumnNames()
         if branches[0] in all_branches:
             return df, []
@@ -532,16 +560,16 @@ class HHDNNRDFProducer(JetLepMetSyst):
             "Tau_pt{2}, Tau_eta, Tau_phi, Tau_mass{2}, "
             "Jet_pt{3}, Jet_eta, Jet_phi, Jet_mass{3}, "
             "{7}tt_svfit_pt{4}, {7}tt_svfit_eta{4}, {7}tt_svfit_phi{4}, {7}tt_svfit_mass{4}, "
-            "{7}{7}KinFit_mass{4}, {7}{7}KinFit_chi2{4}, MET{5}_pt{6}, MET{5}_phi{6}, "
+            "{8}KinFit_mass{4}, {8}KinFit_chi2{4}, MET{5}_pt{6}, MET{5}_phi{6}, "
             "Jet_btagDeepFlavB, Jet_btagDeepFlavCvL, Jet_btagDeepFlavCvB, Jet_HHbtag)".format(
                 self.muon_syst, self.electron_syst, self.tau_syst, self.jet_syst, self.systs,
-                self.met_smear_tag, self.met_syst, p)
+                self.met_smear_tag, self.met_syst, p_sv, pp)
             ).Define(branches[0], "dnn_output%s[0]" % self.systs)
         return df, branches
 
 def HHDNNInputRDF(**kwargs):
     """
-    Returns the HH->bbtt or ZZ->bbtt DNN input.
+    Returns the DNN input.
 
     Lepton and jet systematics (used for pt and mass variables) can be modified using the parameters
     from :ref:`BaseModules_JetLepMetSyst`.
@@ -556,17 +584,17 @@ def HHDNNInputRDF(**kwargs):
             parameters:
                 isMC: self.dataset.process.isMC
                 year: self.config.year
-                isZZAnalysis: True
+                AnalysisType: self.config.get_aux('AnalysisType', False)
 
     """
-    isZZAnalysis = kwargs.pop("isZZAnalysis", False)
+    AnalysisType = kwargs.pop("AnalysisType", False)
 
-    # print("### DEBUG 1 : isZZAnalysis = {}".format(isZZAnalysis))
-    return lambda: HHDNNInputRDFProducer(isZZAnalysis=isZZAnalysis, **kwargs)
+    # print("### DEBUG 1 : AnalysisType = {}".format(AnalysisType))
+    return lambda: HHDNNInputRDFProducer(AnalysisType=AnalysisType, **kwargs)
 
 def HHDNNRDF(**kwargs):
     """
-    Returns the HH->bbtt DNN or ZZ->bbtt output.
+    Returns the HH->bbtt or ZZ/ZH->bbtt DNN output.
 
     Lepton and jet systematics (used for pt and mass variables) can be modified using the parameters
     from :ref:`BaseModules_JetLepMetSyst`.
@@ -581,11 +609,11 @@ def HHDNNRDF(**kwargs):
             parameters:
                 isMC: self.dataset.process.isMC
                 year: self.config.year
-                isZZAnalysis: True
+                AnalysisType: self.config.get_aux('AnalysisType', False)
 
     """
-    isZZAnalysis = kwargs.pop("isZZAnalysis", False)
+    AnalysisType = kwargs.pop("AnalysisType", False)
 
-    # print("### DEBUG 2 : isZZAnalysis = {}".format(isZZAnalysis))
-    return lambda: HHDNNRDFProducer(isZZAnalysis=isZZAnalysis, **kwargs)
+    # print("### DEBUG 2 : AnalysisType = {}".format(AnalysisType))
+    return lambda: HHDNNRDFProducer(AnalysisType=AnalysisType, **kwargs)
 
